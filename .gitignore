@@ -1,6 +1,32 @@
-Nothing should be ignored since only a single source code file (.mq4) was added without any build artifacts, dependencies, or temporary files.node_modules/
+```
+# Compiled/Binary files
+*.mq4~
+*.ex4
+*.o
+*.obj
+*.dll
+*.so
+*.a
+*.out
+
+# Dependencies
+MQL4/Libraries/
+MQL4/Include/
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Logs
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+```node_modules/
 .next/
 dist/
 build/
-*.log
-node_modules/

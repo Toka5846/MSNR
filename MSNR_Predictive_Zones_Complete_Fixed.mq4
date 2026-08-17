@@ -882,14 +882,36 @@ void DetectSweepsAndSetups() {
 }
 
 void DrawArrow(datetime t, double p, int code, color c, string lbl) {
-   string nm = objPrefix + "Arr_" + TimeToString(t);
-   if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_ARROW, 0, t, p);
-   ObjectSetInteger(0, nm, OBJPROP_ARROWCODE, code); ObjectSetInteger(0, nm, OBJPROP_COLOR, c); ObjectSetInteger(0, nm, OBJPROP_WIDTH, 3); 
-   if(ShowSweepLabels) {
-      string lblNm = nm + "_LBL";
-      if(ObjectFind(0, lblNm) < 0) ObjectCreate(0, lblNm, OBJ_TEXT, 0, t, p);
-      ObjectSetText(lblNm, lbl, 8, "Arial", c);
-      ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, code == 233 ? ANCHOR_UPPER : ANCHOR_LOWER);
+   // Create unique name including price to avoid duplicates on same bar
+   string nm = objPrefix + "Arr_" + TimeToString(t) + "_" + DoubleToString(p, _Digits);
+   
+   // Prevent duplicate arrows on the exact same bar/price
+   if(ObjectFind(0, nm) >= 0) return;
+
+   // Use Arrow Code 159 (Small Dot) instead of 233/234 to reduce clutter
+   // 233/234 are huge arrows. 159 is a small dot.
+   int smallCode = 159; 
+   
+   if(ObjectCreate(0, nm, OBJ_ARROW, 0, t, p)) {
+      ObjectSetInteger(0, nm, OBJPROP_ARROWCODE, smallCode); 
+      ObjectSetInteger(0, nm, OBJPROP_COLOR, c); 
+      ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); // Thinner line
+      ObjectSetInteger(0, nm, OBJPROP_SELECTABLE, false); // Prevent accidental clicking
+      
+      if(ShowSweepLabels) {
+         string lblNm = nm + "_LBL";
+         if(ObjectCreate(0, lblNm, OBJ_TEXT, 0, t, p)) {
+            // Smaller font (7 instead of 8) and cleaner text
+            string cleanLbl = StringReplace(lbl, " V SWEEP", "");
+            cleanLbl = StringReplace(cleanLbl, " A SWEEP", "");
+            cleanLbl = (code == 233) ? "V" : "A"; // Just show V or A
+            
+            ObjectSetText(lblNm, cleanLbl, 7, "Arial", c); 
+            // Move label slightly away from the arrow to avoid overlap
+            ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT); 
+            ObjectSetInteger(0, lblNm, OBJPROP_XOFFSET, 10); 
+         }
+      }
    }
 }
 
@@ -926,8 +948,9 @@ bool DrawSetupBracket(int zoneIdx, bool isBuy, datetime t, double sweepPrice, bo
    string lblNm = nm + "_TXT"; 
    if(ObjectFind(0, lblNm) < 0) ObjectCreate(0, lblNm, OBJ_TEXT, 0, t + PeriodSeconds()*16, entry);
    else { ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, t + PeriodSeconds()*16); ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, entry); }
-   string setupType = isHighProb ? "A+ SETUP" : "STANDARD";
-   ObjectSetText(lblNm, (isBuy?"BUY":"SELL") + " " + setupType + " | RR: " + DoubleToString(rr, 1), 9, "Arial Bold", bracketColor);
+   string setupType = isHighProb ? "A+" : "STD";
+   // Cleaner label: just direction and RR, remove wordy "SETUP"/"STANDARD"
+   ObjectSetText(lblNm, (isBuy?"B":"S") + ":" + DoubleToString(rr, 1), 8, "Arial", bracketColor);
    ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
    return true;
 }
