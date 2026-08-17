@@ -3,3 +3,4 @@ Nothing should be ignored since only a single source code file (.mq4) was added 
 dist/
 build/
 *.log
+node_modules/
