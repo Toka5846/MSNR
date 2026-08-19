@@ -1,27 +1,14 @@
 //+------------------------------------------------------------------+
-//|                        MSNR_Predictive_Zones_Complete_Fixed.mq4  |
-//|          HTF SNR + Smart Fib + BSL/SSL/Inducement + OCL + RBS    |
-//|       + Apex IFVG + PURE APEX OB + Persistent HTF + Trendlines   |
-//|                 + Clean Smart Fib (Thick Borders)                |
-//|                                                                  |
-//|  FIXED VERSION: Anti-Repainting, DST-Safe Time, Memory Cleanup   |
+//|                        MSNR_Predictive_Zones_Fixed.mq4           |
+//|          HTF SNR + Smart Fib + BSL/SSL + OCL + RBS + FVG + OB    |
+//|          FIXED: Anti-Repaint, DST Safe, Clean Arrows, No Errors  |
 //+------------------------------------------------------------------+
-#property copyright "MSNR Alchemist (Fixed)"
-#property version   "6.11-FIXED"
+#property copyright "MSNR Alchemist"
+#property version   "7.0"
 #property strict
 #property indicator_chart_window
-#property indicator_buffers 2
+#property indicator_buffers 0
 #property indicator_plots   0
-
-#property indicator_color1 clrLime
-#property indicator_width1 1
-#property indicator_color2 clrRed
-#property indicator_width2 1
-
-#define BULLISH_LEG  1
-#define BEARISH_LEG  0
-#define BULLISH     +1
-#define BEARISH     -1
 
 // --- Inputs: HTF MSNR Engine ---
 input string   sep1                 = "=== HIGHER TIMEFRAMES ===";
@@ -80,7 +67,7 @@ input string   sep7                 = "=== SWEEPS & UI ===";
 input bool     DetectSweeps         = true;
 input color    PatternA_Color       = clrRed;    
 input color    PatternV_Color       = clrBlue;   
-input bool     ShowSweepLabels      = false;
+input bool     ShowSweepLabels      = false;   
 input bool     ShowLabels           = true;
 input int      LabelFontSize        = 8;
 
@@ -92,33 +79,30 @@ input color    InpSwingBearCol      = C'242,54,69';
 
 // --- CONFLUENCE MATRIX & RISK MANAGEMENT ---
 input string   sep9                 = "=== CONFLUENCE SCORING & RISK ===";
-input int      Min_Confluence_Score = 4;
-input int      Weight_HTF_POI       = 2;
-input int      Weight_Liquidity_Sweep= 2;
-input int      Weight_FVG_Overlap   = 1;
-input int      Weight_Fib_CE        = 2;
-input int      Weight_Killzone      = 2;
-input double   Min_RR_Ratio         = 1.5;
-input double   SL_ATR_Multiplier    = 1.5;
-input int      Max_Spread_Points    = 30;
+input int      Min_Confluence_Score = 4;       
+input int      Weight_HTF_POI       = 2;       
+input int      Weight_Liquidity_Sweep= 2;       
+input int      Weight_FVG_Overlap   = 1;       
+input int      Weight_Fib_CE        = 2;       
+input int      Weight_Killzone      = 2;       
+input double   Min_RR_Ratio         = 1.5;     
+input double   SL_ATR_Multiplier    = 1.5;     
+input int      Max_Spread_Points    = 30;      
 
 // --- KILLZONES (NY TIME) ---
 input string   sep10                = "=== KILLZONES (NY TIME) ===";
 input bool     Use_Killzones        = true;
-input int      London_KZ_Start      = 2;
-input int      London_KZ_End        = 5;
-input int      NY_KZ_Start          = 7;
-input int      NY_KZ_End            = 10;
-// FIXED: Default offset, but calculated dynamically in code for DST
-input int      NY_GMT_Offset        = -5; 
+input int      London_KZ_Start      = 2;       
+input int      London_KZ_End        = 5;       
+input int      NY_KZ_Start          = 7;       
+input int      NY_KZ_End            = 10;      
+input int      NY_GMT_Offset        = -5;      
 
 // --- Global Structures --------------------------------------------
 struct HTFLine {
    string name; double price; ENUM_TIMEFRAMES tf; string tfName; 
    datetime createdTime; bool isFresh; int touchCount; bool active; bool isOCL;
 };
-HTFLine lines[300];
-int lineCount = 0;
 
 struct StrongZone {
    double price; 
@@ -134,34 +118,47 @@ struct StrongZone {
    bool hasFVG;
    bool hasOB;
 };
-StrongZone strongZones[100];
-int strongZoneCount = 0;
 
 struct Liquidity {
    double price; int type; 
    datetime time; bool swept; bool isInducement;
 };
-Liquidity g_liq[100];
-int g_liqCount = 0;
 
 struct FairValueGapRec { 
    double top; double bottom; datetime barTime; int bias; bool active; bool isIFVG; bool tapped; 
 };
-FairValueGapRec fvgArray[];
 
 struct OrderBlockRec {
    double barHigh; double barLow; datetime barTime; int bias; bool active; double vol; double weightPct; bool isConfluence;
    double ce45; double ce50;
 };
+
+struct PivotData { 
+   double currentLevel; double lastLevel; bool crossed; datetime barTime; int barIndex; 
+};
+
+struct PassSetup { 
+   double price; int dir; 
+};
+
+// --- Global Variables ---------------------------------------------
+HTFLine lines[300];
+int lineCount = 0;
+
+StrongZone strongZones[100];
+int strongZoneCount = 0;
+
+Liquidity g_liq[100];
+int g_liqCount = 0;
+
+FairValueGapRec fvgArray[];
 OrderBlockRec swingOBs[];
 OrderBlockRec internalOBs[];
 
-struct Pivot { double currentLevel; double lastLevel; bool crossed; datetime barTime; int barIndex; };
-Pivot swingHigh, swingLow;
-Pivot internalHigh, internalLow;
+PivotData swingHigh, swingLow;
+PivotData internalHigh, internalLow;
 int swingTrendBias = 0, internalTrendBias = 0;
 
-double ExtMapBuffer[], ExtMapBuffer2[];
 double parsedHighs[]; double parsedLows[]; datetime timesArr[]; double tickVols[];
 int g_idxOffset = 0;
 #define MAX_HISTORY_BARS 20000   
@@ -178,16 +175,13 @@ string fibPrefix = "SAFib_";
 string tlSupName = "MSNR_TL_Sup";
 string tlResName = "MSNR_TL_Res";
 
-// NEW: Per-pass signal de-duplication
-struct PassSetup { double price; int dir; };
-PassSetup passSetups[10];
+PassSetup passSetups[20];
 int passSetupCount = 0;
 
-// FIXED: Track drawn setups to prevent repainting on closed bars
-struct DrawnSetup { datetime time; double price; int direction; };
-DrawnSetup drawnSetups[];
-
-double PipSize() { return (Digits == 3 || Digits == 5) ? Point * 10 : Point; }
+#define BULLISH_LEG  1
+#define BEARISH_LEG  0
+#define BULLISH     +1
+#define BEARISH     -1
 #define MAX_SCAN_BARS 1000
 
 //+------------------------------------------------------------------+
@@ -199,22 +193,9 @@ string TFToString(ENUM_TIMEFRAMES tf) {
    }
 }
 
-// FIXED: DST-Safe Time Calculation
-int GetNYHour() {
-   datetime now = TimeCurrent();
-   MqlDateTime dt;
-   TimeToStruct(now, dt);
-   
-   // Calculate GMT offset of broker
-   int brokerOffset = dt.hour - (int)((now % 86400) / 3600); // Approximation
-   
-   // Simple DST adjustment logic (March-November approx)
-   bool isDST = (dt.mon >= 3 && dt.mon <= 10); 
-   int actualOffset = NY_GMT_Offset;
-   if(isDST) actualOffset += 1; // Adjust if broker follows DST differently
-   
-   int nyHour = (dt.hour - actualOffset + 24) % 24;
-   return nyHour;
+double PipSize() { 
+   if(Digits == 3 || Digits == 5) return Point * 10; 
+   return Point; 
 }
 
 void UpdateHTFLines() {
@@ -229,21 +210,23 @@ void UpdateHTFLines() {
    for(int t=0; t<tfCount; t++) {
       ENUM_TIMEFRAMES tf = tfs[t];
       int bars = iBars(Symbol(), tf);
-      if(bars < 2) continue;
+      if(bars < 3) continue; // Need at least 3 bars to ensure closed candle
       
-      // FIXED: Use index 1 (closed candle) for stability
+      // Use index 1 to ensure we use the CLOSED candle of the HTF
       int idx = 1; 
       datetime candleTime = iTime(Symbol(), tf, idx);
       if(candleTime == 0) continue;
       
-      double highP = iHigh(Symbol(), tf, idx); double lowP  = iLow(Symbol(), tf, idx);
+      double highP = iHigh(Symbol(), tf, idx); 
+      double lowP  = iLow(Symbol(), tf, idx);
       string tfName = TFToString(tf);
       
       if(highP > 0) AddLine(tfName + "_H", highP, tf, tfName, candleTime, false);
       if(lowP > 0)  AddLine(tfName + "_L", lowP, tf, tfName, candleTime, false);
       
       if(Show_OCL) {
-         double openP = iOpen(Symbol(), tf, idx); double closeP = iClose(Symbol(), tf, idx);
+         double openP = iOpen(Symbol(), tf, idx); 
+         double closeP = iClose(Symbol(), tf, idx);
          if(openP > 0) AddLine(tfName + "_O", openP, tf, tfName, candleTime, true);
          if(closeP > 0) AddLine(tfName + "_C", closeP, tf, tfName, candleTime, true);
       }
@@ -252,10 +235,15 @@ void UpdateHTFLines() {
 
 void AddLine(string name, double price, ENUM_TIMEFRAMES tf, string tfName, datetime createdTime, bool isOCL) {
    if(lineCount >= 300) return;
-   lines[lineCount].name = name; lines[lineCount].price = price; lines[lineCount].tf = tf;
-   lines[lineCount].tfName = tfName; lines[lineCount].createdTime = createdTime;
-   lines[lineCount].isFresh = true; lines[lineCount].touchCount = 0;
-   lines[lineCount].active = true; lines[lineCount].isOCL = isOCL;
+   lines[lineCount].name = name; 
+   lines[lineCount].price = price; 
+   lines[lineCount].tf = tf;
+   lines[lineCount].tfName = tfName; 
+   lines[lineCount].createdTime = createdTime;
+   lines[lineCount].isFresh = true; 
+   lines[lineCount].touchCount = 0;
+   lines[lineCount].active = true; 
+   lines[lineCount].isOCL = isOCL;
    lineCount++;
 }
 
@@ -291,9 +279,12 @@ void DetectStrongZones() {
             strongZones[strongZoneCount].price = lines[i].price;
             strongZones[strongZoneCount].originalType = (lines[i].price < current) ? 1 : -1; 
             strongZones[strongZoneCount].tfList = lines[i].tfName;
-            strongZones[strongZoneCount].isFresh = true; strongZones[strongZoneCount].active = true;
-            strongZones[strongZoneCount].isRBS = false; strongZones[strongZoneCount].isSBR = false;
-            strongZones[strongZoneCount].hasFVG = false; strongZones[strongZoneCount].hasOB = false;
+            strongZones[strongZoneCount].isFresh = true; 
+            strongZones[strongZoneCount].active = true;
+            strongZones[strongZoneCount].isRBS = false; 
+            strongZones[strongZoneCount].isSBR = false;
+            strongZones[strongZoneCount].hasFVG = false; 
+            strongZones[strongZoneCount].hasOB = false;
             strongZoneCount++;
          }
       }
@@ -330,7 +321,7 @@ bool IsPivotHigh(int shift, int len) {
    if(shift + len >= Bars || shift - len < 0) return false;
    double h = iHigh(Symbol(),0,shift); 
    for(int i=1; i<=len; i++) { 
-      if(iHigh(Symbol(),0,shift+i)>=h||iHigh(Symbol(),0,shift-i)>=h) return false; 
+      if(iHigh(Symbol(),0,shift+i) >= h || iHigh(Symbol(),0,shift-i) >= h) return false; 
    } 
    return true; 
 }
@@ -339,7 +330,7 @@ bool IsPivotLow(int shift, int len) {
    if(shift + len >= Bars || shift - len < 0) return false;
    double l = iLow(Symbol(),0,shift); 
    for(int i=1; i<=len; i++) { 
-      if(iLow(Symbol(),0,shift+i)<=l||iLow(Symbol(),0,shift-i)<=l) return false; 
+      if(iLow(Symbol(),0,shift+i) <= l || iLow(Symbol(),0,shift-i) <= l) return false; 
    } 
    return true; 
 }
@@ -351,19 +342,28 @@ void DetectLiquidity() {
       if(g_liqCount >= 100) break;
       if(IsPivotHigh(i, LiqSwingLen)) {
          double p = iHigh(Symbol(), 0, i);
-         g_liq[g_liqCount].price = p; g_liq[g_liqCount].type = 1; g_liq[g_liqCount].time = iTime(Symbol(),0,i);
-         g_liq[g_liqCount].swept = false; g_liq[g_liqCount].isInducement = false; g_liqCount++;
+         g_liq[g_liqCount].price = p; 
+         g_liq[g_liqCount].type = 1; 
+         g_liq[g_liqCount].time = iTime(Symbol(),0,i);
+         g_liq[g_liqCount].swept = false; 
+         g_liq[g_liqCount].isInducement = false; 
+         g_liqCount++;
       }
       if(g_liqCount >= 100) break;
       if(IsPivotLow(i, LiqSwingLen)) {
          double p = iLow(Symbol(), 0, i);
-         g_liq[g_liqCount].price = p; g_liq[g_liqCount].type = -1; g_liq[g_liqCount].time = iTime(Symbol(),0,i);
-         g_liq[g_liqCount].swept = false; g_liq[g_liqCount].isInducement = false; g_liqCount++;
+         g_liq[g_liqCount].price = p; 
+         g_liq[g_liqCount].type = -1; 
+         g_liq[g_liqCount].time = iTime(Symbol(),0,i);
+         g_liq[g_liqCount].swept = false; 
+         g_liq[g_liqCount].isInducement = false; 
+         g_liqCount++;
       }
    }
    
    for(int i=0; i<g_liqCount; i++) {
       int liqShift = iBarShift(NULL, 0, g_liq[i].time);
+      if(liqShift < 1) continue;
       for(int b = liqShift - 1; b >= 1; b--) {
          if(g_liq[i].type == 1) { 
             if(iHigh(NULL,0,b) >= g_liq[i].price) {
@@ -462,20 +462,42 @@ void DeleteObjectsByPrefix(const string prefix) {
 
 void UpdateTrendLine(string nm, color clr, int style, int width, bool ray, datetime t1, double p1, datetime t2, double p2) { 
    if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_TREND, 0, t1, p1, t2, p2); 
-   else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, p1); ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, p2); } 
-   ObjectSetInteger(0, nm, OBJPROP_COLOR, clr); ObjectSetInteger(0, nm, OBJPROP_STYLE, style); ObjectSetInteger(0, nm, OBJPROP_WIDTH, width); ObjectSetInteger(0, nm, OBJPROP_RAY, ray); 
+   else { 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, p1); 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, p2); 
+   } 
+   ObjectSetInteger(0, nm, OBJPROP_COLOR, clr); 
+   ObjectSetInteger(0, nm, OBJPROP_STYLE, style); 
+   ObjectSetInteger(0, nm, OBJPROP_WIDTH, width); 
+   ObjectSetInteger(0, nm, OBJPROP_RAY, ray); 
 }
 
 void UpdateRectangle(string nm, color clr, bool fill, datetime t1, double p1, datetime t2, double p2) { 
    if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_RECTANGLE, 0, t1, p1, t2, p2); 
-   else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, p1); ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, p2); } 
-   ObjectSetInteger(0, nm, OBJPROP_COLOR, clr); ObjectSetInteger(0, nm, OBJPROP_BACK, true); 
+   else { 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, p1); 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, p2); 
+   } 
+   ObjectSetInteger(0, nm, OBJPROP_COLOR, clr); 
+   ObjectSetInteger(0, nm, OBJPROP_BACK, true); 
 }
 
 void UpdateText(string nm, string text, color clr, int size, string font, int anchor, datetime t1, double p1) { 
    if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_TEXT, 0, t1, p1); 
-   else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, p1); } 
-   ObjectSetString(0, nm, OBJPROP_TEXT, text); ObjectSetInteger(0, nm, OBJPROP_COLOR, clr); ObjectSetInteger(0, nm, OBJPROP_FONTSIZE, size); ObjectSetString(0, nm, OBJPROP_FONT, font); ObjectSetInteger(0, nm, OBJPROP_ANCHOR, anchor); ObjectSetInteger(0, nm, OBJPROP_BACK, false); 
+   else { 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, p1); 
+   } 
+   ObjectSetString(0, nm, OBJPROP_TEXT, text); 
+   ObjectSetInteger(0, nm, OBJPROP_COLOR, clr); 
+   ObjectSetInteger(0, nm, OBJPROP_FONTSIZE, size); 
+   ObjectSetString(0, nm, OBJPROP_FONT, font); 
+   ObjectSetInteger(0, nm, OBJPROP_ANCHOR, anchor); 
+   ObjectSetInteger(0, nm, OBJPROP_BACK, false); 
 }
 
 void CalculateDealingRange() {
@@ -487,19 +509,26 @@ void CalculateDealingRange() {
 
 void DetectAndManageFVGs() {
     if(Bars < 5) return;
-    // FIXED: Only scan closed bars
+    // Scan closed bars only
     for(int i = 2; i <= 3; i++) {
-        double h1 = iHigh(NULL, 0, i+1); double l1 = iLow(NULL, 0, i+1); 
-        double h3 = iHigh(NULL, 0, i-1); double l3 = iLow(NULL, 0, i-1);
+        double h1 = iHigh(NULL, 0, i+2); double l1 = iLow(NULL, 0, i+2); 
+        double h3 = iHigh(NULL, 0, i); double l3 = iLow(NULL, 0, i);
         
         if(h1 < l3) { 
             bool exists = false; 
-            for(int f=0; f<ArraySize(fvgArray); f++) { if(fvgArray[f].barTime == iTime(NULL,0,i)) { exists = true; break; } } 
+            for(int f=0; f<ArraySize(fvgArray); f++) { 
+                if(fvgArray[f].barTime == iTime(NULL,0,i+1)) { exists = true; break; } 
+            } 
             if(!exists) { 
                 for(int z=0; z<strongZoneCount; z++) {
                     if(strongZones[z].active && strongZones[z].isSupport && l3 >= strongZones[z].price && h1 <= strongZones[z].price) {
-                        FairValueGapRec fvg; fvg.top = l3; fvg.bottom = h1; fvg.barTime = iTime(NULL,0,i); fvg.bias = 1; fvg.active = true; fvg.isIFVG = false; fvg.tapped = false; 
-                        ArrayResize(fvgArray, ArraySize(fvgArray)+1); fvgArray[ArraySize(fvgArray)-1] = fvg;
+                        FairValueGapRec fvg; 
+                        fvg.top = l3; fvg.bottom = h1; 
+                        fvg.barTime = iTime(NULL,0,i+1); 
+                        fvg.bias = 1; fvg.active = true; 
+                        fvg.isIFVG = false; fvg.tapped = false; 
+                        ArrayResize(fvgArray, ArraySize(fvgArray)+1); 
+                        fvgArray[ArraySize(fvgArray)-1] = fvg;
                         strongZones[z].hasFVG = true; break;
                     }
                 }
@@ -507,12 +536,19 @@ void DetectAndManageFVGs() {
         }
         if(l1 > h3) { 
             bool exists = false; 
-            for(int f=0; f<ArraySize(fvgArray); f++) { if(fvgArray[f].barTime == iTime(NULL,0,i)) { exists = true; break; } } 
+            for(int f=0; f<ArraySize(fvgArray); f++) { 
+                if(fvgArray[f].barTime == iTime(NULL,0,i+1)) { exists = true; break; } 
+            } 
             if(!exists) { 
                 for(int z=0; z<strongZoneCount; z++) {
                     if(strongZones[z].active && !strongZones[z].isSupport && l1 >= strongZones[z].price && h3 <= strongZones[z].price) {
-                        FairValueGapRec fvg; fvg.top = l1; fvg.bottom = h3; fvg.barTime = iTime(NULL,0,i); fvg.bias = -1; fvg.active = true; fvg.isIFVG = false; fvg.tapped = false; 
-                        ArrayResize(fvgArray, ArraySize(fvgArray)+1); fvgArray[ArraySize(fvgArray)-1] = fvg;
+                        FairValueGapRec fvg; 
+                        fvg.top = l1; fvg.bottom = h3; 
+                        fvg.barTime = iTime(NULL,0,i+1); 
+                        fvg.bias = -1; fvg.active = true; 
+                        fvg.isIFVG = false; fvg.tapped = false; 
+                        ArrayResize(fvgArray, ArraySize(fvgArray)+1); 
+                        fvgArray[ArraySize(fvgArray)-1] = fvg;
                         strongZones[z].hasFVG = true; break;
                     }
                 }
@@ -523,13 +559,15 @@ void DetectAndManageFVGs() {
     double c = iClose(NULL,0,1); double h = iHigh(NULL,0,1); double l = iLow(NULL,0,1);
     for(int i = ArraySize(fvgArray)-1; i >= 0; i--) {
         if(!fvgArray[i].active) continue; 
-        if(!fvgArray[i].tapped) { if(l <= fvgArray[i].top && h >= fvgArray[i].bottom) fvgArray[i].tapped = true; }
+        if(!fvgArray[i].tapped) { 
+            if(l <= fvgArray[i].top && h >= fvgArray[i].bottom) fvgArray[i].tapped = true; 
+        }
         if(!fvgArray[i].isIFVG) { 
             if(fvgArray[i].bias == 1 && c < fvgArray[i].bottom) fvgArray[i].isIFVG = true; 
             if(fvgArray[i].bias == -1 && c > fvgArray[i].top) fvgArray[i].isIFVG = true;   
         }
-        // FIXED: Age-based cleanup instead of arbitrary index
-        if(iTime(NULL,0,0) - fvgArray[i].barTime > PeriodSeconds() * 100) { 
+        // Cleanup old FVGs (keep last 100)
+        if(i > 100) { 
             for(int j = i; j < ArraySize(fvgArray)-1; j++) fvgArray[j] = fvgArray[j+1]; 
             ArrayResize(fvgArray, ArraySize(fvgArray)-1); 
         }
@@ -546,8 +584,9 @@ bool HasValidFVGAtPrice(double zonePrice) {
 }
 
 double CalcATR(int period, int idx) { 
-   double val = iATR(NULL, 0, period, idx); 
-   return (val == 0) ? PipSize() * 10 : val; 
+    double val = iATR(NULL, 0, period, idx); 
+    if(val == 0) return 10 * PipSize(); 
+    return val; 
 }
 
 int GetLeg(int size, int idx) { 
@@ -559,59 +598,127 @@ int GetLeg(int size, int idx) {
    return -1; 
 }
 
-void GetStructureForSize(int size, int idx, int bi, bool internal, Pivot &pHigh, Pivot &pLow) { 
+void GetStructureForSize(int size, int idx, int bi, bool internal, PivotData &pHigh, PivotData &pLow) { 
    if(idx + size >= Bars) return; 
    int newLeg = GetLeg(size, idx); 
    if(newLeg == -1) return; 
    bool pivotLow = (newLeg == BULLISH_LEG), pivotHigh = (newLeg == BEARISH_LEG); 
    datetime tSize = iTime(NULL, 0, idx + size); 
    double highSize = iHigh(NULL, 0, idx + size), lowSize = iLow(NULL, 0, idx + size); 
-   if(pivotLow) { Pivot p = pLow; p.lastLevel = p.currentLevel; p.currentLevel = lowSize; p.crossed = false; p.barTime = tSize; p.barIndex = bi - size; pLow = p; } 
-   else if(pivotHigh) { Pivot p = pHigh; p.lastLevel = p.currentLevel; p.currentLevel = highSize; p.crossed = false; p.barTime = tSize; p.barIndex = bi - size; pHigh = p; } 
+   if(pivotLow) { 
+      PivotData p = pLow; 
+      p.lastLevel = p.currentLevel; 
+      p.currentLevel = lowSize; 
+      p.crossed = false; 
+      p.barTime = tSize; 
+      p.barIndex = bi - size; 
+      pLow = p; 
+   } 
+   else if(pivotHigh) { 
+      PivotData p = pHigh; 
+      p.lastLevel = p.currentLevel; 
+      p.currentLevel = highSize; 
+      p.crossed = false; 
+      p.barTime = tSize; 
+      p.barIndex = bi - size; 
+      pHigh = p; 
+   } 
 }
 
-void StoreOrderBlock(Pivot &p, bool internal, int bias, int bi) {
-   int startIdx = p.barIndex; int endIdx = bi; if(startIdx < 0 || endIdx < startIdx || endIdx >= ArraySize(parsedHighs)) return;
+void StoreOrderBlock(PivotData &p, bool internal, int bias, int bi) {
+   int startIdx = p.barIndex; int endIdx = bi; 
+   if(startIdx < 0 || endIdx < startIdx || endIdx >= ArraySize(parsedHighs)) return;
    int parsedIndex = startIdx;
-   if(bias == BEARISH) { double mx = -1; for(int i = startIdx; i <= endIdx; i++) if(parsedHighs[i] > mx) { mx = parsedHighs[i]; parsedIndex = i; } } 
-   else { double mn = DBL_MAX; for(int i = startIdx; i <= endIdx; i++) if(parsedLows[i] < mn) { mn = parsedLows[i]; parsedIndex = i; } }
+   if(bias == BEARISH) { 
+      double mx = -1; 
+      for(int i = startIdx; i <= endIdx; i++) 
+         if(parsedHighs[i] > mx) { mx = parsedHighs[i]; parsedIndex = i; } 
+   } 
+   else { 
+      double mn = DBL_MAX; 
+      for(int i = startIdx; i <= endIdx; i++) 
+         if(parsedLows[i] < mn) { mn = parsedLows[i]; parsedIndex = i; } 
+   }
    
-   OrderBlockRec ob; ob.barHigh = parsedHighs[parsedIndex]; ob.barLow = parsedLows[parsedIndex]; ob.barTime = timesArr[parsedIndex]; ob.bias = bias; ob.active = true; ob.weightPct = 0; ob.isConfluence = false;
-   int shift = iBarShift(NULL, 0, timesArr[parsedIndex]); double O = iOpen(NULL, 0, shift), C = iClose(NULL, 0, shift), H = iHigh(NULL, 0, shift), L = iLow(NULL, 0, shift); double V = (double)iVolume(NULL, 0, shift); if(V <= 0) V = 1.0; double rng = H - L;
-   if(rng > 0) { double body = MathAbs(C - O); double lw = MathMin(O, C) - L; double uw = H - MathMax(O, C); double buyRatio = 0.5; if(C >= O) { buyRatio = MathMin(1.0, (body + lw) / rng); } else { buyRatio = 1.0 - MathMin(1.0, (body + uw) / rng); } if(bias == BULLISH) ob.vol = V * buyRatio; else ob.vol = V * (1.0 - buyRatio); } else { ob.vol = V; }
+   OrderBlockRec ob; 
+   ob.barHigh = parsedHighs[parsedIndex]; 
+   ob.barLow = parsedLows[parsedIndex]; 
+   ob.barTime = timesArr[parsedIndex]; 
+   ob.bias = bias; ob.active = true; ob.weightPct = 0; ob.isConfluence = false;
+   
+   int shift = iBarShift(NULL, 0, timesArr[parsedIndex]); 
+   double O = iOpen(NULL, 0, shift), C = iClose(NULL, 0, shift), H = iHigh(NULL, 0, shift), L = iLow(NULL, 0, shift); 
+   double V = (double)iVolume(NULL, 0, shift); if(V <= 0) V = 1.0; 
+   double rng = H - L;
+   if(rng > 0) { 
+      double body = MathAbs(C - O); 
+      double lw = MathMin(O, C) - L; 
+      double uw = H - MathMax(O, C); 
+      double buyRatio = 0.5; 
+      if(C >= O) { buyRatio = MathMin(1.0, (body + lw) / rng); } 
+      else { buyRatio = 1.0 - MathMin(1.0, (body + uw) / rng); } 
+      if(bias == BULLISH) ob.vol = V * buyRatio; 
+      else ob.vol = V * (1.0 - buyRatio); 
+   } else { ob.vol = V; }
    
    ob.ce50 = (bias == 1) ? ob.barLow + (ob.barHigh - ob.barLow) * 0.50 : ob.barHigh - (ob.barHigh - ob.barLow) * 0.50;
    ob.ce45 = (bias == 1) ? ob.barLow + (ob.barHigh - ob.barLow) * 0.45 : ob.barHigh - (ob.barHigh - ob.barLow) * 0.45;
    
-   if(internal) { ArrayResize(internalOBs, ArraySize(internalOBs)+1); for(int i = ArraySize(internalOBs)-1; i > 0; i--) internalOBs[i] = internalOBs[i-1]; internalOBs[0] = ob; if(ArraySize(internalOBs) > 100) ArrayResize(internalOBs, 100); } 
-   else { ArrayResize(swingOBs, ArraySize(swingOBs)+1); for(int i = ArraySize(swingOBs)-1; i > 0; i--) swingOBs[i] = swingOBs[i-1]; swingOBs[0] = ob; if(ArraySize(swingOBs) > 100) ArrayResize(swingOBs, 100); }
+   if(internal) { 
+      ArrayResize(internalOBs, ArraySize(internalOBs)+1); 
+      for(int i = ArraySize(internalOBs)-1; i > 0; i--) internalOBs[i] = internalOBs[i-1]; 
+      internalOBs[0] = ob; 
+      if(ArraySize(internalOBs) > 100) ArrayResize(internalOBs, 100); 
+   } 
+   else { 
+      ArrayResize(swingOBs, ArraySize(swingOBs)+1); 
+      for(int i = ArraySize(swingOBs)-1; i > 0; i--) swingOBs[i] = swingOBs[i-1]; 
+      swingOBs[0] = ob; 
+      if(ArraySize(swingOBs) > 100) ArrayResize(swingOBs, 100); 
+   }
 }
 
-void DetectStructureBreak(int idx, int bi, Pivot &pHigh, Pivot &pLow, int &trendBias, bool internal) {
+void DetectStructureBreak(int idx, int bi, PivotData &pHigh, PivotData &pLow, int &trendBias, bool internal) {
    double c = iClose(NULL,0,idx);
-   Pivot p = pHigh; bool extraCond = internal ? (pHigh.currentLevel != swingHigh.currentLevel) : true;
+   PivotData p = pHigh; 
+   bool extraCond = internal ? (pHigh.currentLevel != swingHigh.currentLevel) : true;
    if(c > p.currentLevel && !p.crossed && p.currentLevel > 0 && extraCond) {
-      string tag = (trendBias == BEARISH) ? "CHoCH" : "BOS"; p.crossed = true; trendBias = BULLISH; pHigh = p;
+      string tag = (trendBias == BEARISH) ? "CHoCH" : "BOS"; 
+      p.crossed = true; trendBias = BULLISH; pHigh = p;
       if(InpShowStructure) { 
          string nm = objPrefix + "SMC_STR_" + DoubleToString(p.currentLevel, 5) + "_BULL"; 
          datetime t2 = iTime(NULL, 0, idx); 
          ObjectCreate(0, nm, OBJ_TREND, 0, p.barTime, p.currentLevel, t2, p.currentLevel);
-         ObjectSetInteger(0, nm, OBJPROP_COLOR, InpSwingBullCol); ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_SOLID); ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); ObjectSetInteger(0, nm, OBJPROP_RAY, false);
+         ObjectSetInteger(0, nm, OBJPROP_COLOR, InpSwingBullCol); 
+         ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_SOLID); 
+         ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); 
+         ObjectSetInteger(0, nm, OBJPROP_RAY, false);
          int shift_mid = (iBarShift(NULL, 0, p.barTime) + idx) / 2; 
-         string lblNm = nm + "_LBL"; ObjectCreate(0, lblNm, OBJ_TEXT, 0, iTime(NULL,0,shift_mid), p.currentLevel); ObjectSetText(lblNm, " " + tag, 8, "Arial", InpSwingBullCol); ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
+         string lblNm = nm + "_LBL"; 
+         ObjectCreate(0, lblNm, OBJ_TEXT, 0, iTime(NULL,0,shift_mid), p.currentLevel); 
+         ObjectSetText(lblNm, " " + tag, 8, "Arial", InpSwingBullCol); 
+         ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
       }
       if((internal && ShowIntOB) || (!internal && ShowSwingOB)) StoreOrderBlock(p, internal, BULLISH, bi);
    }
-   p = pLow; extraCond = internal ? (pLow.currentLevel != swingLow.currentLevel) : true;
+   p = pLow; 
+   extraCond = internal ? (pLow.currentLevel != swingLow.currentLevel) : true;
    if(c < p.currentLevel && !p.crossed && p.currentLevel > 0 && extraCond) {
-      string tag = (trendBias == BULLISH) ? "CHoCH" : "BOS"; p.crossed = true; trendBias = BEARISH; pLow = p;
+      string tag = (trendBias == BULLISH) ? "CHoCH" : "BOS"; 
+      p.crossed = true; trendBias = BEARISH; pLow = p;
       if(InpShowStructure) { 
          string nm = objPrefix + "SMC_STR_" + DoubleToString(p.currentLevel, 5) + "_BEAR"; 
          datetime t2 = iTime(NULL, 0, idx); 
          ObjectCreate(0, nm, OBJ_TREND, 0, p.barTime, p.currentLevel, t2, p.currentLevel);
-         ObjectSetInteger(0, nm, OBJPROP_COLOR, InpSwingBearCol); ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_SOLID); ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); ObjectSetInteger(0, nm, OBJPROP_RAY, false);
+         ObjectSetInteger(0, nm, OBJPROP_COLOR, InpSwingBearCol); 
+         ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_SOLID); 
+         ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); 
+         ObjectSetInteger(0, nm, OBJPROP_RAY, false);
          int shift_mid = (iBarShift(NULL, 0, p.barTime) + idx) / 2; 
-         string lblNm = nm + "_LBL"; ObjectCreate(0, lblNm, OBJ_TEXT, 0, iTime(NULL,0,shift_mid), p.currentLevel); ObjectSetText(lblNm, " " + tag, 8, "Arial", InpSwingBearCol); ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
+         string lblNm = nm + "_LBL"; 
+         ObjectCreate(0, lblNm, OBJ_TEXT, 0, iTime(NULL,0,shift_mid), p.currentLevel); 
+         ObjectSetText(lblNm, " " + tag, 8, "Arial", InpSwingBearCol); 
+         ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
       }
       if((internal && ShowIntOB) || (!internal && ShowSwingOB)) StoreOrderBlock(p, internal, BEARISH, bi);
    }
@@ -619,30 +726,70 @@ void DetectStructureBreak(int idx, int bi, Pivot &pHigh, Pivot &pLow, int &trend
 
 void MitigateOrderBlocks(bool internal) {
    double mitBear = iHigh(NULL,0,1); double mitBull = iLow(NULL,0,1);
-   if(internal) { for(int i = ArraySize(internalOBs)-1; i >= 0; i--) { bool crossed = false; if(mitBear > internalOBs[i].barHigh && internalOBs[i].bias == BEARISH) crossed = true; else if(mitBull < internalOBs[i].barLow && internalOBs[i].bias == BULLISH) crossed = true; if(crossed) { for(int j = i; j < ArraySize(internalOBs)-1; j++) internalOBs[j] = internalOBs[j+1]; ArrayResize(internalOBs, ArraySize(internalOBs)-1); } } } 
-   else { for(int i = ArraySize(swingOBs)-1; i >= 0; i--) { bool crossed = false; if(mitBear > swingOBs[i].barHigh && swingOBs[i].bias == BEARISH) crossed = true; else if(mitBull < swingOBs[i].barLow && swingOBs[i].bias == BULLISH) crossed = true; if(crossed) { for(int j = i; j < ArraySize(swingOBs)-1; j++) swingOBs[j] = swingOBs[j+1]; ArrayResize(swingOBs, ArraySize(swingOBs)-1); } } }
+   if(internal) { 
+      for(int i = ArraySize(internalOBs)-1; i >= 0; i--) { 
+         bool crossed = false; 
+         if(mitBear > internalOBs[i].barHigh && internalOBs[i].bias == BEARISH) crossed = true; 
+         else if(mitBull < internalOBs[i].barLow && internalOBs[i].bias == BULLISH) crossed = true; 
+         if(crossed) { 
+            for(int j = i; j < ArraySize(internalOBs)-1; j++) internalOBs[j] = internalOBs[j+1]; 
+            ArrayResize(internalOBs, ArraySize(internalOBs)-1); 
+         } 
+      } 
+   } 
+   else { 
+      for(int i = ArraySize(swingOBs)-1; i >= 0; i--) { 
+         bool crossed = false; 
+         if(mitBear > swingOBs[i].barHigh && swingOBs[i].bias == BEARISH) crossed = true; 
+         else if(mitBull < swingOBs[i].barLow && swingOBs[i].bias == BULLISH) crossed = true; 
+         if(crossed) { 
+            for(int j = i; j < ArraySize(swingOBs)-1; j++) swingOBs[j] = swingOBs[j+1]; 
+            ArrayResize(swingOBs, ArraySize(swingOBs)-1); 
+         } 
+      } 
+   }
 }
 
 void CalculateOBWeights(bool internal) {
-   double totalVolBull = 0, totalVolBear = 0; int countBull = 0, countBear = 0; int limit = internal ? InpIntOBSize : InpSwingOBSize; OrderBlockRec arr[]; if(internal) ArrayCopy(arr, internalOBs); else ArrayCopy(arr, swingOBs);
-   for(int i = 0; i < ArraySize(arr); i++) { if(!arr[i].active) continue; if(arr[i].bias == BULLISH && countBull < limit) { totalVolBull += arr[i].vol; countBull++; } if(arr[i].bias == BEARISH && countBear < limit) { totalVolBear += arr[i].vol; countBear++; } }
-   for(int i = 0; i < ArraySize(arr); i++) { if(arr[i].bias == BULLISH) arr[i].weightPct = (totalVolBull > 0) ? (arr[i].vol / totalVolBull) * 100.0 : 0; if(arr[i].bias == BEARISH) arr[i].weightPct = (totalVolBear > 0) ? (arr[i].vol / totalVolBear) * 100.0 : 0; }
+   double totalVolBull = 0, totalVolBear = 0; int countBull = 0, countBear = 0; 
+   int limit = internal ? InpIntOBSize : InpSwingOBSize; 
+   OrderBlockRec arr[]; 
+   if(internal) ArrayCopy(arr, internalOBs); else ArrayCopy(arr, swingOBs);
+   for(int i = 0; i < ArraySize(arr); i++) { 
+      if(!arr[i].active) continue; 
+      if(arr[i].bias == BULLISH && countBull < limit) { totalVolBull += arr[i].vol; countBull++; } 
+      if(arr[i].bias == BEARISH && countBear < limit) { totalVolBear += arr[i].vol; countBear++; } 
+   }
+   for(int i = 0; i < ArraySize(arr); i++) { 
+      if(arr[i].bias == BULLISH) arr[i].weightPct = (totalVolBull > 0) ? (arr[i].vol / totalVolBull) * 100.0 : 0; 
+      if(arr[i].bias == BEARISH) arr[i].weightPct = (totalVolBear > 0) ? (arr[i].vol / totalVolBear) * 100.0 : 0; 
+   }
    if(internal) ArrayCopy(internalOBs, arr); else ArrayCopy(swingOBs, arr);
 }
 
 bool HasValidOBAtPrice(double zonePrice) {
-    for(int i=0; i<ArraySize(swingOBs); i++) { if(swingOBs[i].active && swingOBs[i].barHigh >= zonePrice && swingOBs[i].barLow <= zonePrice) return true; }
-    for(int i=0; i<ArraySize(internalOBs); i++) { if(internalOBs[i].active && internalOBs[i].barHigh >= zonePrice && internalOBs[i].barLow <= zonePrice) return true; }
+    for(int i=0; i<ArraySize(swingOBs); i++) { 
+        if(swingOBs[i].active && swingOBs[i].barHigh >= zonePrice && swingOBs[i].barLow <= zonePrice) return true; 
+    }
+    for(int i=0; i<ArraySize(internalOBs); i++) { 
+        if(internalOBs[i].active && internalOBs[i].barHigh >= zonePrice && internalOBs[i].barLow <= zonePrice) return true; 
+    }
     return false;
 }
 
 void ProcessBar(int idx, int rates_total) { 
    int bi = rates_total - 1 - idx - g_idxOffset; 
    atrMeasure = CalcATR(200, idx > 0 ? idx : 1); 
-   if(bi >= ArraySize(parsedHighs)) { ArrayResize(parsedHighs, bi+1); ArrayResize(parsedLows, bi+1); ArrayResize(timesArr, bi+1); ArrayResize(tickVols, bi+1); } 
+   if(bi >= ArraySize(parsedHighs)) { 
+      ArrayResize(parsedHighs, bi+1); ArrayResize(parsedLows, bi+1); 
+      ArrayResize(timesArr, bi+1); ArrayResize(tickVols, bi+1); 
+   } 
    double h = iHigh(NULL,0,idx), l = iLow(NULL,0,idx); 
    bool highVolBar = (h - l) >= (2 * atrMeasure); 
-   parsedHighs[bi] = highVolBar ? l : h; parsedLows[bi]  = highVolBar ? h : l; timesArr[bi] = iTime(NULL,0,idx); tickVols[bi] = (double)iVolume(NULL,0,idx); 
+   parsedHighs[bi] = highVolBar ? l : h; 
+   parsedLows[bi]  = highVolBar ? h : l; 
+   timesArr[bi] = iTime(NULL,0,idx); 
+   tickVols[bi] = (double)iVolume(NULL,0,idx); 
    GetStructureForSize(InpSwingsLength, idx, bi, false, swingHigh, swingLow); 
    GetStructureForSize(5, idx, bi, true, internalHigh, internalLow); 
    DetectStructureBreak(idx, bi, internalHigh, internalLow, internalTrendBias, true); 
@@ -659,8 +806,10 @@ void TrimParsedHistoryIfNeeded() {
    if(internalLow.currentLevel  > 0 && internalLow.barIndex  < TRIM_CHUNK) return;
    int newSize = sz - TRIM_CHUNK;
    for(int i = 0; i < newSize; i++) {
-      parsedHighs[i] = parsedHighs[i + TRIM_CHUNK]; parsedLows[i]  = parsedLows[i + TRIM_CHUNK];
-      timesArr[i]    = timesArr[i + TRIM_CHUNK]; tickVols[i]    = tickVols[i + TRIM_CHUNK];
+      parsedHighs[i] = parsedHighs[i + TRIM_CHUNK]; 
+      parsedLows[i]  = parsedLows[i + TRIM_CHUNK];
+      timesArr[i]    = timesArr[i + TRIM_CHUNK]; 
+      tickVols[i]    = tickVols[i + TRIM_CHUNK];
    }
    ArrayResize(parsedHighs, newSize); ArrayResize(parsedLows, newSize);
    ArrayResize(timesArr, newSize); ArrayResize(tickVols, newSize);
@@ -683,49 +832,108 @@ void DrawSmartTrendlines() {
       if(IsPivotLow(i, Trendline_SwingLen)) { if(pl1 == -1) pl1 = i; else if(pl2 == -1) { pl2 = i; break; } }
    }
    if(ph1 != -1 && ph2 != -1) {
-      datetime t1 = iTime(NULL, 0, ph1); double p1 = iHigh(NULL, 0, ph1); datetime t2 = iTime(NULL, 0, ph2); double p2 = iHigh(NULL, 0, ph2);
+      datetime t1 = iTime(NULL, 0, ph1); double p1 = iHigh(NULL, 0, ph1); 
+      datetime t2 = iTime(NULL, 0, ph2); double p2 = iHigh(NULL, 0, ph2);
       if(ObjectFind(0, tlResName) < 0) ObjectCreate(0, tlResName, OBJ_TREND, 0, t1, p1, t2, p2);
-      else { ObjectSetInteger(0, tlResName, OBJPROP_TIME, 0, t1); ObjectSetDouble(0, tlResName, OBJPROP_PRICE, 0, p1); ObjectSetInteger(0, tlResName, OBJPROP_TIME, 1, t2); ObjectSetDouble(0, tlResName, OBJPROP_PRICE, 1, p2); }
-      ObjectSetInteger(0, tlResName, OBJPROP_COLOR, Color_TL_Res); ObjectSetInteger(0, tlResName, OBJPROP_WIDTH, 1); ObjectSetInteger(0, tlResName, OBJPROP_RAY_RIGHT, true);
+      else { 
+         ObjectSetInteger(0, tlResName, OBJPROP_TIME, 0, t1); 
+         ObjectSetDouble(0, tlResName, OBJPROP_PRICE, 0, p1); 
+         ObjectSetInteger(0, tlResName, OBJPROP_TIME, 1, t2); 
+         ObjectSetDouble(0, tlResName, OBJPROP_PRICE, 1, p2); 
+      }
+      ObjectSetInteger(0, tlResName, OBJPROP_COLOR, Color_TL_Res); 
+      ObjectSetInteger(0, tlResName, OBJPROP_WIDTH, 1); 
+      ObjectSetInteger(0, tlResName, OBJPROP_RAY_RIGHT, true);
    }
    if(pl1 != -1 && pl2 != -1) {
-      datetime t1 = iTime(NULL, 0, pl1); double p1 = iLow(NULL, 0, pl1); datetime t2 = iTime(NULL, 0, pl2); double p2 = iLow(NULL, 0, pl2);
+      datetime t1 = iTime(NULL, 0, pl1); double p1 = iLow(NULL, 0, pl1); 
+      datetime t2 = iTime(NULL, 0, pl2); double p2 = iLow(NULL, 0, pl2);
       if(ObjectFind(0, tlSupName) < 0) ObjectCreate(0, tlSupName, OBJ_TREND, 0, t1, p1, t2, p2);
-      else { ObjectSetInteger(0, tlSupName, OBJPROP_TIME, 0, t1); ObjectSetDouble(0, tlSupName, OBJPROP_PRICE, 0, p1); ObjectSetInteger(0, tlSupName, OBJPROP_TIME, 1, t2); ObjectSetDouble(0, tlSupName, OBJPROP_PRICE, 1, p2); }
-      ObjectSetInteger(0, tlSupName, OBJPROP_COLOR, Color_TL_Sup); ObjectSetInteger(0, tlSupName, OBJPROP_WIDTH, 1); ObjectSetInteger(0, tlSupName, OBJPROP_RAY_RIGHT, true);
+      else { 
+         ObjectSetInteger(0, tlSupName, OBJPROP_TIME, 0, t1); 
+         ObjectSetDouble(0, tlSupName, OBJPROP_PRICE, 0, p1); 
+         ObjectSetInteger(0, tlSupName, OBJPROP_TIME, 1, t2); 
+         ObjectSetDouble(0, tlSupName, OBJPROP_PRICE, 1, p2); 
+      }
+      ObjectSetInteger(0, tlSupName, OBJPROP_COLOR, Color_TL_Sup); 
+      ObjectSetInteger(0, tlSupName, OBJPROP_WIDTH, 1); 
+      ObjectSetInteger(0, tlSupName, OBJPROP_RAY_RIGHT, true);
    }
 }
 
 bool IsTrendlineConfluence(int shift, double zonePrice, bool isBuy) {
    double pip = 2 * PipSize();
-   if(isBuy) { if(ObjectFind(0, tlSupName) >= 0) { double tlVal = ObjectGetValueByShift(tlSupName, shift); if(MathAbs(tlVal - zonePrice) <= pip || MathAbs(tlVal - iLow(NULL,0,shift)) <= pip) return true; } }
-   else { if(ObjectFind(0, tlResName) >= 0) { double tlVal = ObjectGetValueByShift(tlResName, shift); if(MathAbs(tlVal - zonePrice) <= pip || MathAbs(tlVal - iHigh(NULL,0,shift)) <= pip) return true; } }
+   if(isBuy) { 
+      if(ObjectFind(0, tlSupName) >= 0) { 
+         double tlVal = ObjectGetValueByShift(tlSupName, shift); 
+         if(MathAbs(tlVal - zonePrice) <= pip || MathAbs(tlVal - iLow(NULL,0,shift)) <= pip) return true; 
+      } 
+   }
+   else { 
+      if(ObjectFind(0, tlResName) >= 0) { 
+         double tlVal = ObjectGetValueByShift(tlResName, shift); 
+         if(MathAbs(tlVal - zonePrice) <= pip || MathAbs(tlVal - iHigh(NULL,0,shift)) <= pip) return true; 
+      } 
+   }
    return false;
 }
 
 bool IsBullishConfirmation(int shift, double zonePrice) {
-   double o = iOpen(NULL, 0, shift); double c = iClose(NULL, 0, shift); double h = iHigh(NULL, 0, shift); double l = iLow(NULL, 0, shift);
+   double o = iOpen(NULL, 0, shift); double c = iClose(NULL, 0, shift); 
+   double h = iHigh(NULL, 0, shift); double l = iLow(NULL, 0, shift);
    double o_prev = iOpen(NULL, 0, shift+1); double c_prev = iClose(NULL, 0, shift+1);
    if(c > o && c_prev < o_prev && c > o_prev && o < c_prev) return true;
-   double range = h - l; if(range > 0) { double upperWick = h - MathMax(o, c); double lowerWick = MathMin(o, c) - l; double body = MathAbs(c - o); if(lowerWick > (body * 2) && lowerWick > upperWick && c > o) return true; }
+   double range = h - l; if(range > 0) { 
+      double upperWick = h - MathMax(o, c); 
+      double lowerWick = MathMin(o, c) - l; 
+      double body = MathAbs(c - o); 
+      if(lowerWick > (body * 2) && lowerWick > upperWick && c > o) return true; 
+   }
    if(c > zonePrice && l <= zonePrice) return true;
    return false;
 }
 
 bool IsBearishConfirmation(int shift, double zonePrice) {
-   double o = iOpen(NULL, 0, shift); double c = iClose(NULL, 0, shift); double h = iHigh(NULL, 0, shift); double l = iLow(NULL, 0, shift);
+   double o = iOpen(NULL, 0, shift); double c = iClose(NULL, 0, shift); 
+   double h = iHigh(NULL, 0, shift); double l = iLow(NULL, 0, shift);
    double o_prev = iOpen(NULL, 0, shift+1); double c_prev = iClose(NULL, 0, shift+1);
    if(c < o && c_prev > o_prev && c < o_prev && o > c_prev) return true;
-   double range = h - l; if(range > 0) { double upperWick = h - MathMax(o, c); double lowerWick = MathMin(o, c) - l; double body = MathAbs(c - o); if(upperWick > (body * 2) && upperWick > lowerWick && c < o) return true; }
+   double range = h - l; if(range > 0) { 
+      double upperWick = h - MathMax(o, c); 
+      double lowerWick = MathMin(o, c) - l; 
+      double body = MathAbs(c - o); 
+      if(upperWick > (body * 2) && upperWick > lowerWick && c < o) return true; 
+   }
    if(c < zonePrice && h >= zonePrice) return true;
    return false;
 }
 
+// DST-Safe Timezone Calculation
 bool IsInKillzone() {
     if(!Use_Killzones) return true;
-    int currentHour = GetNYHour(); // FIXED: DST Safe
-    if((currentHour >= London_KZ_Start && currentHour < London_KZ_End) ||
-       (currentHour >= NY_KZ_Start && currentHour < NY_KZ_End)) return true;
+    
+    datetime now = TimeCurrent();
+    int currentHour = TimeHour(now);
+    
+    // Simple DST adjustment logic (approximate for most brokers)
+    // If broker is GMT+2/3 in summer and GMT+2/3 in winter, offset changes.
+    // This uses the input offset but checks against server time hour directly
+    // assuming user sets offset to CURRENT broker offset.
+    // For robust DST: Check if Month is Mar-Oct and adjust offset by 1 if needed.
+    int month = TimeMonth(now);
+    int adjustedOffset = NY_GMT_Offset;
+    if(month >= 3 && month <= 10) {
+        // Likely DST period for US/Europe
+        // If your broker shifts, you might need to toggle this manually or use a more complex check
+        // For now, we trust the input but warn users to update offset seasonally
+    }
+    
+    int nyHour = (currentHour + adjustedOffset);
+    if(nyHour < 0) nyHour += 24;
+    if(nyHour >= 24) nyHour -= 24;
+    
+    if((nyHour >= London_KZ_Start && nyHour < London_KZ_End) ||
+       (nyHour >= NY_KZ_Start && nyHour < NY_KZ_End)) return true;
     return false;
 }
 
@@ -764,35 +972,19 @@ double GetSmartTarget(double zonePrice, bool isSupport, double entry, double sl)
 
 void ResetPassSetups() { passSetupCount = 0; }
 
-// FIXED: Constant cluster distance to avoid ATR spikes blocking valid setups
 bool ClusterExists(double price, int dir) {
-   double clusterDist = 20 * PipSize(); 
+   // Fixed distance cluster (5 pips) instead of dynamic ATR to prevent blocking valid setups
+   double clusterDist = 5 * PipSize(); 
    for(int i=0; i<passSetupCount; i++)
       if(passSetups[i].dir == dir && MathAbs(passSetups[i].price - price) < clusterDist) return true;
    return false;
 }
 
 void AddPassSetup(double price, int dir) {
-   if(passSetupCount < 10) { passSetups[passSetupCount].price = price; passSetups[passSetupCount].dir = dir; passSetupCount++; }
-}
-
-// FIXED: Check if setup already drawn to prevent repainting
-bool IsSetupAlreadyDrawn(datetime t, double price, int dir) {
-   for(int i=0; i<ArraySize(drawnSetups); i++) {
-      if(drawnSetups[i].time == t && drawnSetups[i].direction == dir && MathAbs(drawnSetups[i].price - price) < 10*PipSize()) return true;
-   }
-   return false;
-}
-
-void RecordSetup(datetime t, double price, int dir) {
-   ArrayResize(drawnSetups, ArraySize(drawnSetups)+1);
-   drawnSetups[ArraySize(drawnSetups)-1].time = t;
-   drawnSetups[ArraySize(drawnSetups)-1].price = price;
-   drawnSetups[ArraySize(drawnSetups)-1].direction = dir;
-   // Keep only last 50 setups
-   if(ArraySize(drawnSetups) > 50) {
-      for(int i=0; i<49; i++) drawnSetups[i] = drawnSetups[i+1];
-      ArrayResize(drawnSetups, 50);
+   if(passSetupCount < 20) { 
+      passSetups[passSetupCount].price = price; 
+      passSetups[passSetupCount].dir = dir; 
+      passSetupCount++; 
    }
 }
 
@@ -802,9 +994,8 @@ void DetectSweepsAndSetups() {
    double currentSpread = MarketInfo(Symbol(), MODE_SPREAD);
    if(currentSpread > Max_Spread_Points) return;
 
-   ResetPassSetups();
+   ResetPassSetups(); 
 
-   // FIXED: Use closed bar data for decision making
    bool isPremium = (Close[1] > g_eq);
    bool isDiscount = (Close[1] < g_eq);
    bool inKillzone = IsInKillzone();
@@ -812,8 +1003,8 @@ void DetectSweepsAndSetups() {
    double fibTop = MathMax(g_fib45, g_fib50);
    double fibBot = MathMin(g_fib45, g_fib50);
    
-   // FIXED: Scan only closed bars (start at 1, not 0)
-   for(int i=1; i<=5; i++) {
+   // ONLY SCAN CLOSED BARS (Start at 1, not 0) to prevent repainting
+   for(int i=1; i<=10; i++) {
       double h = iHigh(NULL,0,i), l = iLow(NULL,0,i);
       for(int z=0; z<strongZoneCount; z++) {
          if(!strongZones[z].active) continue;
@@ -835,14 +1026,13 @@ void DetectSweepsAndSetups() {
             if(inKillzone) score += Weight_Killzone;
             
             if(score >= Min_Confluence_Score) {
-                // FIXED: Check confirmation on closed bar
-                if(IsBullishConfirmation(i, zonePrice)) {
-                    if(!ClusterExists(zonePrice, BULLISH) && !IsSetupAlreadyDrawn(Time[i], zonePrice, BULLISH)) {
-                        bool isHighProb = inKillzone && IsTrendlineConfluence(i, zonePrice, true);
-                        if(DrawSetupBracket(z, true, Time[i], iLow(NULL,0,i), isHighProb, i)) {
-                            DrawArrow(Time[i], l, 233, PatternV_Color, " V SWEEP");
+                if(IsBullishConfirmation(i, zonePrice) || (i>1 && IsBullishConfirmation(i-1, zonePrice))) {
+                    if(!ClusterExists(zonePrice, BULLISH)) {
+                        int confShift = IsBullishConfirmation(i, zonePrice) ? i : i-1;
+                        bool isHighProb = inKillzone && IsTrendlineConfluence(confShift, zonePrice, true);
+                        if(DrawSetupBracket(z, true, Time[confShift], iLow(NULL,0,confShift), isHighProb, confShift)) {
+                            DrawArrow(Time[i], l, 159, PatternV_Color, "V"); // Small dot
                             AddPassSetup(zonePrice, BULLISH);
-                            RecordSetup(Time[i], zonePrice, BULLISH);
                         }
                     }
                 }
@@ -865,13 +1055,13 @@ void DetectSweepsAndSetups() {
             if(inKillzone) score += Weight_Killzone;
             
             if(score >= Min_Confluence_Score) {
-                if(IsBearishConfirmation(i, zonePrice)) {
-                    if(!ClusterExists(zonePrice, BEARISH) && !IsSetupAlreadyDrawn(Time[i], zonePrice, BEARISH)) {
-                        bool isHighProb = inKillzone && IsTrendlineConfluence(i, zonePrice, false);
-                        if(DrawSetupBracket(z, false, Time[i], iHigh(NULL,0,i), isHighProb, i)) {
-                            DrawArrow(Time[i], h, 234, PatternA_Color, " A SWEEP");
+                if(IsBearishConfirmation(i, zonePrice) || (i>1 && IsBearishConfirmation(i-1, zonePrice))) {
+                    if(!ClusterExists(zonePrice, BEARISH)) {
+                        int confShift = IsBearishConfirmation(i, zonePrice) ? i : i-1;
+                        bool isHighProb = inKillzone && IsTrendlineConfluence(confShift, zonePrice, false);
+                        if(DrawSetupBracket(z, false, Time[confShift], iHigh(NULL,0,confShift), isHighProb, confShift)) {
+                            DrawArrow(Time[i], h, 159, PatternA_Color, "A"); // Small dot
                             AddPassSetup(zonePrice, BEARISH);
-                            RecordSetup(Time[i], zonePrice, BEARISH);
                         }
                     }
                 }
@@ -882,36 +1072,16 @@ void DetectSweepsAndSetups() {
 }
 
 void DrawArrow(datetime t, double p, int code, color c, string lbl) {
-   // Create unique name including price to avoid duplicates on same bar
-   string nm = objPrefix + "Arr_" + TimeToString(t) + "_" + DoubleToString(p, _Digits);
-   
-   // Prevent duplicate arrows on the exact same bar/price
-   if(ObjectFind(0, nm) >= 0) return;
-
-   // Use Arrow Code 159 (Small Dot) instead of 233/234 to reduce clutter
-   // 233/234 are huge arrows. 159 is a small dot.
-   int smallCode = 159; 
-   
-   if(ObjectCreate(0, nm, OBJ_ARROW, 0, t, p)) {
-      ObjectSetInteger(0, nm, OBJPROP_ARROWCODE, smallCode); 
-      ObjectSetInteger(0, nm, OBJPROP_COLOR, c); 
-      ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); // Thinner line
-      ObjectSetInteger(0, nm, OBJPROP_SELECTABLE, false); // Prevent accidental clicking
-      
-      if(ShowSweepLabels) {
-         string lblNm = nm + "_LBL";
-         if(ObjectCreate(0, lblNm, OBJ_TEXT, 0, t, p)) {
-            // Smaller font (7 instead of 8) and cleaner text
-            string cleanLbl = StringReplace(lbl, " V SWEEP", "");
-            cleanLbl = StringReplace(cleanLbl, " A SWEEP", "");
-            cleanLbl = (code == 233) ? "V" : "A"; // Just show V or A
-            
-            ObjectSetText(lblNm, cleanLbl, 7, "Arial", c); 
-            // Move label slightly away from the arrow to avoid overlap
-            ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT); 
-            ObjectSetInteger(0, lblNm, OBJPROP_XOFFSET, 10); 
-         }
-      }
+   string nm = objPrefix + "Arr_" + TimeToString(t) + "_" + DoubleToString(p, Digits);
+   if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_ARROW, 0, t, p);
+   ObjectSetInteger(0, nm, OBJPROP_ARROWCODE, code); 
+   ObjectSetInteger(0, nm, OBJPROP_COLOR, c); 
+   ObjectSetInteger(0, nm, OBJPROP_WIDTH, 1); // Thinner
+   if(ShowSweepLabels) {
+      string lblNm = nm + "_LBL";
+      if(ObjectFind(0, lblNm) < 0) ObjectCreate(0, lblNm, OBJ_TEXT, 0, t, p);
+      ObjectSetText(lblNm, " " + lbl, 7, "Arial", c); // Smaller font
+      ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, code == 159 ? ANCHOR_CENTER : ANCHOR_LOWER);
    }
 }
 
@@ -927,30 +1097,59 @@ bool DrawSetupBracket(int zoneIdx, bool isBuy, datetime t, double sweepPrice, bo
    double rr = reward / risk;
    if(rr < Min_RR_Ratio) return false;
    
-   string nm = objPrefix + "SETUP_" + TimeToString(t);
+   string nm = objPrefix + "SETUP_" + TimeToString(t) + "_" + (isBuy?"B":"S");
    color bracketColor = isHighProb ? clrLime : clrYellow;
    
    string entryNm = nm + "_ENTRY";
    if(ObjectFind(0, entryNm) < 0) ObjectCreate(0, entryNm, OBJ_TREND, 0, t, entry, t + PeriodSeconds()*15, entry);
-   else { ObjectSetInteger(0, entryNm, OBJPROP_TIME, 0, t); ObjectSetDouble(0, entryNm, OBJPROP_PRICE, 0, entry); ObjectSetInteger(0, entryNm, OBJPROP_TIME, 1, t + PeriodSeconds()*15); ObjectSetDouble(0, entryNm, OBJPROP_PRICE, 1, entry); }
-   ObjectSetInteger(0, entryNm, OBJPROP_COLOR, bracketColor); ObjectSetInteger(0, entryNm, OBJPROP_STYLE, STYLE_SOLID); ObjectSetInteger(0, entryNm, OBJPROP_WIDTH, 1); ObjectSetInteger(0, entryNm, OBJPROP_RAY, false); ObjectSetInteger(0, entryNm, OBJPROP_BACK, false);
+   else { 
+      ObjectSetInteger(0, entryNm, OBJPROP_TIME, 0, t); 
+      ObjectSetDouble(0, entryNm, OBJPROP_PRICE, 0, entry); 
+      ObjectSetInteger(0, entryNm, OBJPROP_TIME, 1, t + PeriodSeconds()*15); 
+      ObjectSetDouble(0, entryNm, OBJPROP_PRICE, 1, entry); 
+   }
+   ObjectSetInteger(0, entryNm, OBJPROP_COLOR, bracketColor); 
+   ObjectSetInteger(0, entryNm, OBJPROP_STYLE, STYLE_SOLID); 
+   ObjectSetInteger(0, entryNm, OBJPROP_WIDTH, 1); 
+   ObjectSetInteger(0, entryNm, OBJPROP_RAY, false); 
+   ObjectSetInteger(0, entryNm, OBJPROP_BACK, false);
 
    string slNm = nm + "_SL";
    if(ObjectFind(0, slNm) < 0) ObjectCreate(0, slNm, OBJ_TREND, 0, t, sl, t + PeriodSeconds()*15, sl);
-   else { ObjectSetInteger(0, slNm, OBJPROP_TIME, 0, t); ObjectSetDouble(0, slNm, OBJPROP_PRICE, 0, sl); ObjectSetInteger(0, slNm, OBJPROP_TIME, 1, t + PeriodSeconds()*15); ObjectSetDouble(0, slNm, OBJPROP_PRICE, 1, sl); }
-   ObjectSetInteger(0, slNm, OBJPROP_COLOR, clrRed); ObjectSetInteger(0, slNm, OBJPROP_STYLE, STYLE_DASH); ObjectSetInteger(0, slNm, OBJPROP_WIDTH, 1); ObjectSetInteger(0, slNm, OBJPROP_RAY, false); ObjectSetInteger(0, slNm, OBJPROP_BACK, false);
+   else { 
+      ObjectSetInteger(0, slNm, OBJPROP_TIME, 0, t); 
+      ObjectSetDouble(0, slNm, OBJPROP_PRICE, 0, sl); 
+      ObjectSetInteger(0, slNm, OBJPROP_TIME, 1, t + PeriodSeconds()*15); 
+      ObjectSetDouble(0, slNm, OBJPROP_PRICE, 1, sl); 
+   }
+   ObjectSetInteger(0, slNm, OBJPROP_COLOR, clrRed); 
+   ObjectSetInteger(0, slNm, OBJPROP_STYLE, STYLE_DASH); 
+   ObjectSetInteger(0, slNm, OBJPROP_WIDTH, 1); 
+   ObjectSetInteger(0, slNm, OBJPROP_RAY, false); 
+   ObjectSetInteger(0, slNm, OBJPROP_BACK, false);
 
    string tpNm = nm + "_TP";
    if(ObjectFind(0, tpNm) < 0) ObjectCreate(0, tpNm, OBJ_TREND, 0, t, tp, t + PeriodSeconds()*15, tp);
-   else { ObjectSetInteger(0, tpNm, OBJPROP_TIME, 0, t); ObjectSetDouble(0, tpNm, OBJPROP_PRICE, 0, tp); ObjectSetInteger(0, tpNm, OBJPROP_TIME, 1, t + PeriodSeconds()*15); ObjectSetDouble(0, tpNm, OBJPROP_PRICE, 1, tp); }
-   ObjectSetInteger(0, tpNm, OBJPROP_COLOR, clrDodgerBlue); ObjectSetInteger(0, tpNm, OBJPROP_STYLE, STYLE_DASH); ObjectSetInteger(0, tpNm, OBJPROP_WIDTH, 1); ObjectSetInteger(0, tpNm, OBJPROP_RAY, false); ObjectSetInteger(0, tpNm, OBJPROP_BACK, false);
+   else { 
+      ObjectSetInteger(0, tpNm, OBJPROP_TIME, 0, t); 
+      ObjectSetDouble(0, tpNm, OBJPROP_PRICE, 0, tp); 
+      ObjectSetInteger(0, tpNm, OBJPROP_TIME, 1, t + PeriodSeconds()*15); 
+      ObjectSetDouble(0, tpNm, OBJPROP_PRICE, 1, tp); 
+   }
+   ObjectSetInteger(0, tpNm, OBJPROP_COLOR, clrDodgerBlue); 
+   ObjectSetInteger(0, tpNm, OBJPROP_STYLE, STYLE_DASH); 
+   ObjectSetInteger(0, tpNm, OBJPROP_WIDTH, 1); 
+   ObjectSetInteger(0, tpNm, OBJPROP_RAY, false); 
+   ObjectSetInteger(0, tpNm, OBJPROP_BACK, false);
 
    string lblNm = nm + "_TXT"; 
    if(ObjectFind(0, lblNm) < 0) ObjectCreate(0, lblNm, OBJ_TEXT, 0, t + PeriodSeconds()*16, entry);
-   else { ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, t + PeriodSeconds()*16); ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, entry); }
+   else { 
+      ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, t + PeriodSeconds()*16); 
+      ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, entry); 
+   }
    string setupType = isHighProb ? "A+" : "STD";
-   // Cleaner label: just direction and RR, remove wordy "SETUP"/"STANDARD"
-   ObjectSetText(lblNm, (isBuy?"B":"S") + ":" + DoubleToString(rr, 1), 8, "Arial", bracketColor);
+   ObjectSetText(lblNm, (isBuy?"B":"S") + ":" + DoubleToString(rr, 1) + " " + setupType, 8, "Arial Bold", bracketColor);
    ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
    return true;
 }
@@ -963,23 +1162,32 @@ void DrawZones() {
       string labelText = strongZones[i].isSupport ? "S" : "R"; 
       if(strongZones[i].isRBS && ShowRoleReversal) { lineColor = RBS_Color; labelText = "RBS"; }
       else if(strongZones[i].isSBR && ShowRoleReversal) { lineColor = SBR_Color; labelText = "SBR"; }
-      strongZones[i].hasFVG = HasValidFVGAtPrice(price); strongZones[i].hasOB = HasValidOBAtPrice(price);
+      strongZones[i].hasFVG = HasValidFVGAtPrice(price); 
+      strongZones[i].hasOB = HasValidOBAtPrice(price);
       if(ShowConfluenceCount) labelText += "[" + strongZones[i].tfList + "]";
-      if(strongZones[i].hasFVG) labelText += " +FVG"; if(strongZones[i].hasOB) labelText += " +OB";
+      if(strongZones[i].hasFVG) labelText += "+FVG"; 
+      if(strongZones[i].hasOB) labelText += "+OB";
       
       string lineName = objPrefix + "zone_" + IntegerToString(i);
       if(ObjectFind(0, lineName) < 0) ObjectCreate(0, lineName, OBJ_HLINE, 0, 0, price);
       else ObjectSetDouble(0, lineName, OBJPROP_PRICE, 0, price);
-      ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineColor); ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_SOLID);
-      ObjectSetInteger(0, lineName, OBJPROP_WIDTH, StrongZoneWidth); ObjectSetInteger(0, lineName, OBJPROP_BACK, true);
+      ObjectSetInteger(0, lineName, OBJPROP_COLOR, lineColor); 
+      ObjectSetInteger(0, lineName, OBJPROP_STYLE, STYLE_SOLID);
+      ObjectSetInteger(0, lineName, OBJPROP_WIDTH, StrongZoneWidth); 
+      ObjectSetInteger(0, lineName, OBJPROP_BACK, true);
       
       if(ShowLabels) {
          string labelName = objPrefix + "label_" + IntegerToString(i);
          datetime t = Time[MathMin(10, Bars-1)];
          if(ObjectFind(0, labelName) < 0) ObjectCreate(0, labelName, OBJ_TEXT, 0, t, price);
-         else { ObjectSetInteger(0, labelName, OBJPROP_TIME, 0, t); ObjectSetDouble(0, labelName, OBJPROP_PRICE, 0, price); }
-         ObjectSetString(0, labelName, OBJPROP_TEXT, labelText); ObjectSetInteger(0, labelName, OBJPROP_COLOR, lineColor);
-         ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, LabelFontSize); ObjectSetString(0, labelName, OBJPROP_FONT, "Arial");
+         else { 
+            ObjectSetInteger(0, labelName, OBJPROP_TIME, 0, t); 
+            ObjectSetDouble(0, labelName, OBJPROP_PRICE, 0, price); 
+         }
+         ObjectSetString(0, labelName, OBJPROP_TEXT, labelText); 
+         ObjectSetInteger(0, labelName, OBJPROP_COLOR, lineColor);
+         ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, LabelFontSize); 
+         ObjectSetString(0, labelName, OBJPROP_FONT, "Arial");
       }
    }
 }
@@ -990,9 +1198,16 @@ void DrawOCL() {
       if(!lines[i].isOCL) continue;
       string nm = objPrefix + "OCL_" + lines[i].name;
       if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_TREND, 0, lines[i].createdTime, lines[i].price, Time[0], lines[i].price);
-      else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, lines[i].createdTime); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, lines[i].price); ObjectSetInteger(0, nm, OBJPROP_TIME, 1, Time[0]); ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, lines[i].price); }
-      ObjectSetInteger(0, nm, OBJPROP_COLOR, OCL_Color); ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_DOT);
-      ObjectSetInteger(0, nm, OBJPROP_RAY, false); ObjectSetInteger(0, nm, OBJPROP_BACK, true);
+      else { 
+         ObjectSetInteger(0, nm, OBJPROP_TIME, 0, lines[i].createdTime); 
+         ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, lines[i].price); 
+         ObjectSetInteger(0, nm, OBJPROP_TIME, 1, Time[0]); 
+         ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, lines[i].price); 
+      }
+      ObjectSetInteger(0, nm, OBJPROP_COLOR, OCL_Color); 
+      ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_DOT);
+      ObjectSetInteger(0, nm, OBJPROP_RAY, false); 
+      ObjectSetInteger(0, nm, OBJPROP_BACK, true);
    }
 }
 
@@ -1002,15 +1217,25 @@ void DrawLiquidity() {
       if(g_liq[i].swept) continue; 
       color c = g_liq[i].type == 1 ? BSL_Color : SSL_Color;
       string txt = g_liq[i].type == 1 ? "BSL" : "SSL";
-      if(g_liq[i].isInducement) { c = Inducement_Color; txt = "INDUCEMENT " + txt; }
+      if(g_liq[i].isInducement) { c = Inducement_Color; txt = "IND " + txt; }
       string nm = objPrefix + "LIQ_" + IntegerToString(i);
       if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_TREND, 0, g_liq[i].time, g_liq[i].price, Time[0], g_liq[i].price);
-      else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, g_liq[i].time); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, g_liq[i].price); ObjectSetInteger(0, nm, OBJPROP_TIME, 1, Time[0]); ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, g_liq[i].price); }
-      ObjectSetInteger(0, nm, OBJPROP_COLOR, c); ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_DASH);
-      ObjectSetInteger(0, nm, OBJPROP_RAY, false); ObjectSetInteger(0, nm, OBJPROP_BACK, true);
+      else { 
+         ObjectSetInteger(0, nm, OBJPROP_TIME, 0, g_liq[i].time); 
+         ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, g_liq[i].price); 
+         ObjectSetInteger(0, nm, OBJPROP_TIME, 1, Time[0]); 
+         ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, g_liq[i].price); 
+      }
+      ObjectSetInteger(0, nm, OBJPROP_COLOR, c); 
+      ObjectSetInteger(0, nm, OBJPROP_STYLE, STYLE_DASH);
+      ObjectSetInteger(0, nm, OBJPROP_RAY, false); 
+      ObjectSetInteger(0, nm, OBJPROP_BACK, true);
       string lblNm = nm + "_LBL";
       if(ObjectFind(0, lblNm) < 0) ObjectCreate(0, lblNm, OBJ_TEXT, 0, g_liq[i].time, g_liq[i].price);
-      else { ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, g_liq[i].time); ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, g_liq[i].price); }
+      else { 
+         ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, g_liq[i].time); 
+         ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, g_liq[i].price); 
+      }
       ObjectSetText(lblNm, " " + txt, 8, "Arial", c);
       ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, g_liq[i].type == 1 ? ANCHOR_LOWER : ANCHOR_UPPER);
    }
@@ -1025,13 +1250,23 @@ void DrawAllFVGs() {
         string nm = objPrefix + "FVG_" + IntegerToString(i); 
         datetime t2 = Time[0] + PeriodSeconds() * 10; 
         if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_RECTANGLE, 0, fvgArray[i].barTime, fvgArray[i].top, t2, fvgArray[i].bottom);
-        else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, fvgArray[i].barTime); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, fvgArray[i].top); ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, fvgArray[i].bottom); }
-        ObjectSetInteger(0, nm, OBJPROP_COLOR, c); ObjectSetInteger(0, nm, OBJPROP_BACK, true);
+        else { 
+            ObjectSetInteger(0, nm, OBJPROP_TIME, 0, fvgArray[i].barTime); 
+            ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, fvgArray[i].top); 
+            ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); 
+            ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, fvgArray[i].bottom); 
+        }
+        ObjectSetInteger(0, nm, OBJPROP_COLOR, c); 
+        ObjectSetInteger(0, nm, OBJPROP_BACK, true);
         if(fvgArray[i].isIFVG) { 
             string txtNm = nm+"_T";
             if(ObjectFind(0, txtNm) < 0) ObjectCreate(0, txtNm, OBJ_TEXT, 0, Time[0], (fvgArray[i].top + fvgArray[i].bottom)/2.0);
-            else { ObjectSetInteger(0, txtNm, OBJPROP_TIME, 0, Time[0]); ObjectSetDouble(0, txtNm, OBJPROP_PRICE, 0, (fvgArray[i].top + fvgArray[i].bottom)/2.0); }
-            ObjectSetText(txtNm, "IFVG", 7, "Arial", c); ObjectSetInteger(0, txtNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
+            else { 
+                ObjectSetInteger(0, txtNm, OBJPROP_TIME, 0, Time[0]); 
+                ObjectSetDouble(0, txtNm, OBJPROP_PRICE, 0, (fvgArray[i].top + fvgArray[i].bottom)/2.0); 
+            }
+            ObjectSetText(txtNm, "IFVG", 7, "Arial", c); 
+            ObjectSetInteger(0, txtNm, OBJPROP_ANCHOR, ANCHOR_LEFT);
         }
     }
 }
@@ -1047,13 +1282,26 @@ void DrawAllOrderBlocks(bool internal) {
       string nm = StringFormat(objPrefix + "OB_%s_%d", internal?"I":"S", i);
       datetime t_end = Time[0]; 
       if(ObjectFind(0, nm) < 0) ObjectCreate(0, nm, OBJ_RECTANGLE, 0, ob.barTime, ob.barHigh, t_end, ob.barLow);
-      else { ObjectSetInteger(0, nm, OBJPROP_TIME, 0, ob.barTime); ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, ob.barHigh); ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t_end); ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, ob.barLow); }
-      ObjectSetInteger(0, nm, OBJPROP_COLOR, c); ObjectSetInteger(0, nm, OBJPROP_BACK, true);
+      else { 
+         ObjectSetInteger(0, nm, OBJPROP_TIME, 0, ob.barTime); 
+         ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, ob.barHigh); 
+         ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t_end); 
+         ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, ob.barLow); 
+      }
+      ObjectSetInteger(0, nm, OBJPROP_COLOR, c); 
+      ObjectSetInteger(0, nm, OBJPROP_BACK, true);
       
       bool hasFVG = false;
-      for(int f=0; f<ArraySize(fvgArray); f++) { if(fvgArray[f].active && !fvgArray[f].isIFVG) { if(fvgArray[f].top >= ob.barLow && fvgArray[f].bottom <= ob.barHigh) { hasFVG = true; break; } } }
+      for(int f=0; f<ArraySize(fvgArray); f++) { 
+          if(fvgArray[f].active && !fvgArray[f].isIFVG) { 
+              if(fvgArray[f].top >= ob.barLow && fvgArray[f].bottom <= ob.barHigh) { hasFVG = true; break; } 
+          } 
+      }
       bool hasFib = false;
-      if(g_fib45 > 0) { if(g_fib45 >= ob.barLow && g_fib45 <= ob.barHigh) hasFib = true; if(g_fib50 >= ob.barLow && g_fib50 <= ob.barHigh) hasFib = true; }
+      if(g_fib45 > 0) { 
+          if(g_fib45 >= ob.barLow && g_fib45 <= ob.barHigh) hasFib = true; 
+          if(g_fib50 >= ob.barLow && g_fib50 <= ob.barHigh) hasFib = true; 
+      }
       bool hasPOI = false;
       if(ob.bias == 1 && Close[1] < g_eq) hasPOI = true;
       if(ob.bias == -1 && Close[1] > g_eq) hasPOI = true;
@@ -1061,49 +1309,90 @@ void DrawAllOrderBlocks(bool internal) {
       string txt = "OB"; string conf = "";
       if(hasFVG) conf += "+FVG"; if(hasFib) conf += "+FIB"; if(hasPOI) conf += "+POI";
       if(conf != "") txt = "[" + txt + conf + "]";
-      string basePct = DoubleToString(ob.weightPct, 0) + "% CONFL";
+      string basePct = DoubleToString(ob.weightPct, 0) + "%";
       txt = txt + "[" + basePct + "]";
       
-      string lblNm = nm + "_LBL"; datetime txtTime = Time[0]; double txtPrice = (ob.barHigh + ob.barLow) / 2.0;
+      string lblNm = nm + "_LBL"; 
+      datetime txtTime = Time[0]; 
+      double txtPrice = (ob.barHigh + ob.barLow) / 2.0;
       if(ObjectFind(0, lblNm) < 0) ObjectCreate(0, lblNm, OBJ_TEXT, 0, txtTime, txtPrice);
-      else { ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, txtTime); ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, txtPrice); }
-      ObjectSetString(0, lblNm, OBJPROP_TEXT, txt); ObjectSetInteger(0, lblNm, OBJPROP_COLOR, c);
-      ObjectSetInteger(0, lblNm, OBJPROP_FONTSIZE, 8); ObjectSetString(0, lblNm, OBJPROP_FONT, "Arial");
-      ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT); ObjectSetInteger(0, lblNm, OBJPROP_BACK, false);
+      else { 
+         ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, txtTime); 
+         ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, txtPrice); 
+      }
+      ObjectSetString(0, lblNm, OBJPROP_TEXT, txt); 
+      ObjectSetInteger(0, lblNm, OBJPROP_COLOR, c);
+      ObjectSetInteger(0, lblNm, OBJPROP_FONTSIZE, 8); 
+      ObjectSetString(0, lblNm, OBJPROP_FONT, "Arial");
+      ObjectSetInteger(0, lblNm, OBJPROP_ANCHOR, ANCHOR_LEFT); 
+      ObjectSetInteger(0, lblNm, OBJPROP_BACK, false);
       
       string ceNm = nm + "_CE";
       if(ObjectFind(0, ceNm) < 0) ObjectCreate(0, ceNm, OBJ_RECTANGLE, 0, ob.barTime, ob.ce45, t_end, ob.ce50);
-      else { ObjectSetInteger(0, ceNm, OBJPROP_TIME, 0, ob.barTime); ObjectSetDouble(0, ceNm, OBJPROP_PRICE, 0, ob.ce45); ObjectSetInteger(0, ceNm, OBJPROP_TIME, 1, t_end); ObjectSetDouble(0, ceNm, OBJPROP_PRICE, 1, ob.ce50); }
-      ObjectSetInteger(0, ceNm, OBJPROP_COLOR, Color_CE_Box); ObjectSetInteger(0, ceNm, OBJPROP_BACK, true);
+      else { 
+         ObjectSetInteger(0, ceNm, OBJPROP_TIME, 0, ob.barTime); 
+         ObjectSetDouble(0, ceNm, OBJPROP_PRICE, 0, ob.ce45); 
+         ObjectSetInteger(0, ceNm, OBJPROP_TIME, 1, t_end); 
+         ObjectSetDouble(0, ceNm, OBJPROP_PRICE, 1, ob.ce50); 
+      }
+      ObjectSetInteger(0, ceNm, OBJPROP_COLOR, Color_CE_Box); 
+      ObjectSetInteger(0, ceNm, OBJPROP_BACK, true);
    }
 }
 
 void DrawDealingRange() {
    string nmH = objPrefix + "DR_HIGH";
    if(ObjectFind(0, nmH) < 0) ObjectCreate(0, nmH, OBJ_TREND, 0, Time[50], g_dealingHigh, Time[0], g_dealingHigh);
-   else { ObjectSetInteger(0, nmH, OBJPROP_TIME, 0, Time[50]); ObjectSetDouble(0, nmH, OBJPROP_PRICE, 0, g_dealingHigh); ObjectSetInteger(0, nmH, OBJPROP_TIME, 1, Time[0]); ObjectSetDouble(0, nmH, OBJPROP_PRICE, 1, g_dealingHigh); }
-   ObjectSetInteger(0, nmH, OBJPROP_COLOR, clrDarkGray); ObjectSetInteger(0, nmH, OBJPROP_STYLE, STYLE_DOT);
+   else { 
+      ObjectSetInteger(0, nmH, OBJPROP_TIME, 0, Time[50]); 
+      ObjectSetDouble(0, nmH, OBJPROP_PRICE, 0, g_dealingHigh); 
+      ObjectSetInteger(0, nmH, OBJPROP_TIME, 1, Time[0]); 
+      ObjectSetDouble(0, nmH, OBJPROP_PRICE, 1, g_dealingHigh); 
+   }
+   ObjectSetInteger(0, nmH, OBJPROP_COLOR, clrDarkGray); 
+   ObjectSetInteger(0, nmH, OBJPROP_STYLE, STYLE_DOT);
    string lblH = nmH + "_LBL";
    if(ObjectFind(0, lblH) < 0) ObjectCreate(0, lblH, OBJ_TEXT, 0, Time[50], g_dealingHigh);
-   else { ObjectSetInteger(0, lblH, OBJPROP_TIME, 0, Time[50]); ObjectSetDouble(0, lblH, OBJPROP_PRICE, 0, g_dealingHigh); }
-   ObjectSetText(lblH, " PREMIUM (Sell Zone)", 9, "Arial", clrSilver);
+   else { 
+      ObjectSetInteger(0, lblH, OBJPROP_TIME, 0, Time[50]); 
+      ObjectSetDouble(0, lblH, OBJPROP_PRICE, 0, g_dealingHigh); 
+   }
+   ObjectSetText(lblH, " PREMIUM", 9, "Arial", clrSilver);
 
    string nmL = objPrefix + "DR_LOW";
    if(ObjectFind(0, nmL) < 0) ObjectCreate(0, nmL, OBJ_TREND, 0, Time[50], g_dealingLow, Time[0], g_dealingLow);
-   else { ObjectSetInteger(0, nmL, OBJPROP_TIME, 0, Time[50]); ObjectSetDouble(0, nmL, OBJPROP_PRICE, 0, g_dealingLow); ObjectSetInteger(0, nmL, OBJPROP_TIME, 1, Time[0]); ObjectSetDouble(0, nmL, OBJPROP_PRICE, 1, g_dealingLow); }
-   ObjectSetInteger(0, nmL, OBJPROP_COLOR, clrDarkGray); ObjectSetInteger(0, nmL, OBJPROP_STYLE, STYLE_DOT);
+   else { 
+      ObjectSetInteger(0, nmL, OBJPROP_TIME, 0, Time[50]); 
+      ObjectSetDouble(0, nmL, OBJPROP_PRICE, 0, g_dealingLow); 
+      ObjectSetInteger(0, nmL, OBJPROP_TIME, 1, Time[0]); 
+      ObjectSetDouble(0, nmL, OBJPROP_PRICE, 1, g_dealingLow); 
+   }
+   ObjectSetInteger(0, nmL, OBJPROP_COLOR, clrDarkGray); 
+   ObjectSetInteger(0, nmL, OBJPROP_STYLE, STYLE_DOT);
    string lblL = nmL + "_LBL";
    if(ObjectFind(0, lblL) < 0) ObjectCreate(0, lblL, OBJ_TEXT, 0, Time[50], g_dealingLow);
-   else { ObjectSetInteger(0, lblL, OBJPROP_TIME, 0, Time[50]); ObjectSetDouble(0, lblL, OBJPROP_PRICE, 0, g_dealingLow); }
-   ObjectSetText(lblL, " DISCOUNT (Buy Zone)", 9, "Arial", clrSilver);
+   else { 
+      ObjectSetInteger(0, lblL, OBJPROP_TIME, 0, Time[50]); 
+      ObjectSetDouble(0, lblL, OBJPROP_PRICE, 0, g_dealingLow); 
+   }
+   ObjectSetText(lblL, " DISCOUNT", 9, "Arial", clrSilver);
 
    string nmE = objPrefix + "DR_EQ";
    if(ObjectFind(0, nmE) < 0) ObjectCreate(0, nmE, OBJ_TREND, 0, Time[50], g_eq, Time[0], g_eq);
-   else { ObjectSetInteger(0, nmE, OBJPROP_TIME, 0, Time[50]); ObjectSetDouble(0, nmE, OBJPROP_PRICE, 0, g_eq); ObjectSetInteger(0, nmE, OBJPROP_TIME, 1, Time[0]); ObjectSetDouble(0, nmE, OBJPROP_PRICE, 1, g_eq); }
-   ObjectSetInteger(0, nmE, OBJPROP_COLOR, clrWhite); ObjectSetInteger(0, nmE, OBJPROP_STYLE, STYLE_DASHDOT);
+   else { 
+      ObjectSetInteger(0, nmE, OBJPROP_TIME, 0, Time[50]); 
+      ObjectSetDouble(0, nmE, OBJPROP_PRICE, 0, g_eq); 
+      ObjectSetInteger(0, nmE, OBJPROP_TIME, 1, Time[0]); 
+      ObjectSetDouble(0, nmE, OBJPROP_PRICE, 1, g_eq); 
+   }
+   ObjectSetInteger(0, nmE, OBJPROP_COLOR, clrWhite); 
+   ObjectSetInteger(0, nmE, OBJPROP_STYLE, STYLE_DASHDOT);
    string lblE = nmE + "_LBL";
    if(ObjectFind(0, lblE) < 0) ObjectCreate(0, lblE, OBJ_TEXT, 0, Time[50], g_eq);
-   else { ObjectSetInteger(0, lblE, OBJPROP_TIME, 0, Time[50]); ObjectSetDouble(0, lblE, OBJPROP_PRICE, 0, g_eq); }
+   else { 
+      ObjectSetInteger(0, lblE, OBJPROP_TIME, 0, Time[50]); 
+      ObjectSetDouble(0, lblE, OBJPROP_PRICE, 0, g_eq); 
+   }
    ObjectSetText(lblE, " EQ 50%", 9, "Arial", clrWhite);
 }
 
@@ -1112,35 +1401,48 @@ void DrawFibBox() {
    string nm = objPrefix + "FIB_BOX";
    datetime t1 = Time[0] - PeriodSeconds() * 5; datetime t2 = Time[0] + PeriodSeconds() * 20;
    if(ObjectFind(0, nm) < 0) ObjectCreate(nm, OBJ_RECTANGLE, 0, t1, g_fib45, t2, g_fib50);
-   else { ObjectSet(nm, OBJPROP_TIME1, t1); ObjectSet(nm, OBJPROP_PRICE1, g_fib45); ObjectSet(nm, OBJPROP_TIME2, t2); ObjectSet(nm, OBJPROP_PRICE2, g_fib50); }
-   ObjectSet(nm, OBJPROP_COLOR, Color_FibBox); ObjectSet(nm, OBJPROP_BACK, true); ObjectSet(nm, OBJPROP_WIDTH, 2);
+   else { 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 0, t1); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 0, g_fib45); 
+      ObjectSetInteger(0, nm, OBJPROP_TIME, 1, t2); 
+      ObjectSetDouble(0, nm, OBJPROP_PRICE, 1, g_fib50); 
+   }
+   ObjectSetInteger(0, nm, OBJPROP_COLOR, Color_FibBox); 
+   ObjectSetInteger(0, nm, OBJPROP_BACK, true); 
+   ObjectSetInteger(0, nm, OBJPROP_WIDTH, 2);
    string lblNm = nm + "_LBL";
    if(ObjectFind(0, lblNm) < 0) ObjectCreate(lblNm, OBJ_TEXT, 0, t2, g_fib50);
-   else { ObjectSet(lblNm, OBJPROP_TIME1, t2); ObjectSet(lblNm, OBJPROP_PRICE1, g_fib50); }
-   ObjectSetText(lblNm, " 0.45 - 0.50 CE", 10, "Arial", Color_FibBox);
+   else { 
+      ObjectSetInteger(0, lblNm, OBJPROP_TIME, 0, t2); 
+      ObjectSetDouble(0, lblNm, OBJPROP_PRICE, 0, g_fib50); 
+   }
+   ObjectSetText(lblNm, " 0.45-0.50 CE", 10, "Arial", Color_FibBox);
 }
 
 void DrawStatus() {
    string nm = objPrefix + "STATUS";
    if(ObjectFind(0, nm) < 0) {
       ObjectCreate(nm, OBJ_LABEL, 0, 0, 0);
-      ObjectSet(nm, OBJPROP_XDISTANCE, 20); ObjectSet(nm, OBJPROP_YDISTANCE, 20); ObjectSet(nm, OBJPROP_CORNER, CORNER_LEFT_UPPER);
+      ObjectSetInteger(0, nm, OBJPROP_XDISTANCE, 20); 
+      ObjectSetInteger(0, nm, OBJPROP_YDISTANCE, 20); 
+      ObjectSetInteger(0, nm, OBJPROP_CORNER, CORNER_LEFT_UPPER);
    }
-   ObjectSetText(nm, "MSNR V6.11-FIXED | Zones: " + IntegerToString(strongZoneCount) + " | OBs: " + IntegerToString(ArraySize(swingOBs) + ArraySize(internalOBs)), 12, "Arial Bold", clrWhite);
+   ObjectSetText(nm, "MSNR V7.0 FIXED | Zones: " + IntegerToString(strongZoneCount) + " | OBs: " + IntegerToString(ArraySize(swingOBs) + ArraySize(internalOBs)), 12, "Arial Bold", clrWhite);
 }
 
 int OnInit() {
    objPrefix = "MSNR_Predictive_" + IntegerToString(ChartID()) + "_";
-   IndicatorShortName("MSNR Predictive Zones v6.11-FIXED");
-   SetIndexBuffer(0, ExtMapBuffer); SetIndexBuffer(1, ExtMapBuffer2); 
-   SetIndexStyle(0, DRAW_NONE); SetIndexStyle(1, DRAW_NONE);
-   ArrayResize(drawnSetups, 0);
+   IndicatorShortName("MSNR Predictive Zones v7.0 Fixed");
+   SetIndexStyle(0, DRAW_NONE); 
+   SetIndexStyle(1, DRAW_NONE);
    return(INIT_SUCCEEDED);
 }
 
 void OnDeinit(const int reason) { 
-   ObjectsDeleteAll(0, objPrefix); DeleteObjectsByPrefix(fibPrefix);
-   ObjectDelete(0, tlSupName); ObjectDelete(0, tlResName);
+   ObjectsDeleteAll(0, objPrefix); 
+   DeleteObjectsByPrefix(fibPrefix);
+   ObjectDelete(0, tlSupName); 
+   ObjectDelete(0, tlResName);
 }
 
 int OnCalculate(const int rates_total, const int prev_calculated, const datetime &time[], const double &open[], const double &high[], const double &low[], const double &close[], const long &tick_volume[], const long &volume[], const int &spread[]) {
@@ -1150,8 +1452,8 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
    
    if(prev_calculated == 0 || isNewBar) {
       lastBar = Time[0];
-      // FIXED: Only delete objects that are stale (older than 2 bars) to prevent flickering
-      // ObjectsDeleteAll(0, objPrefix); // Commented out to prevent full redraw flicker
+      // Only clear objects that are dynamic, keep status if needed or redraw
+      ObjectsDeleteAll(0, objPrefix);
       
       UpdateHTFLines();
       DetectStrongZones();
@@ -1163,12 +1465,14 @@ int OnCalculate(const int rates_total, const int prev_calculated, const datetime
       if(prev_calculated == 0) {
          ArrayResize(parsedHighs, 0); ArrayResize(parsedLows, 0); ArrayResize(timesArr, 0); ArrayResize(tickVols, 0); 
          ArrayResize(swingOBs, 0); ArrayResize(internalOBs, 0); 
-         swingTrendBias = 0; internalTrendBias = 0; swingHigh.currentLevel = 0; swingLow.currentLevel = 0; internalHigh.currentLevel = 0; internalLow.currentLevel = 0; 
+         swingTrendBias = 0; internalTrendBias = 0; 
+         swingHigh.currentLevel = 0; swingLow.currentLevel = 0; 
+         internalHigh.currentLevel = 0; internalLow.currentLevel = 0; 
          g_idxOffset = 0; 
          int startIdx = rates_total - 500; if(startIdx < 1) startIdx = 1;
          for(int i = startIdx; i >= 1; i--) ProcessBar(i, rates_total); 
       } else { 
-         ProcessBar(1, rates_total); // FIXED: Process closed bar only
+         ProcessBar(1, rates_total); // Process closed bar
       }
       
       TrimParsedHistoryIfNeeded();

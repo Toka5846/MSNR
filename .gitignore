@@ -1,33 +1,5 @@
-```
-# Compiled/Binary files
-*.mq4~
-*.ex4
-*.o
-*.obj
-*.dll
-*.so
-*.a
-*.out
-
-# Dependencies
-MQL4/Libraries/
-MQL4/Include/
-
-# Editor/IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# Logs
-*.log
-
-# System files
-.DS_Store
-Thumbs.db
-```node_modules/
+Nothing needs to be added to the .gitignore file since only a single source code file (.mq4) was modified and no build artifacts, dependencies, or temporary files were included in the changes.node_modules/
 .next/
 dist/
 build/
-node_modules/
+*.log
