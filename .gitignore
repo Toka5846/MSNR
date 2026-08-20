@@ -3,3 +3,4 @@ Nothing needs to be added to the .gitignore file since only a single source code
 dist/
 build/
 *.log
+node_modules/
