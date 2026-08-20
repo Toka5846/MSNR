@@ -1,0 +1,6 @@
+Nothing needs to be added to the .gitignore file since only a single source code file (.mq4) was modified and no build artifacts, dependencies, or temporary files were included in the changes.node_modules/
+.next/
+dist/
+build/
+*.log
+node_modules/
